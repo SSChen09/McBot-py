@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>McBot · 登录</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%235b8cff'/%3E%3Ctext x='32' y='43' font-family='Segoe UI,Arial' font-size='26' font-weight='700' fill='white' text-anchor='middle'%3EMC%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="login-body">
+<div class="glow glow--blue"></div>
+<div class="glow glow--violet"></div>
+
+<main class="login-wrap">
+  <form class="card login-card" id="loginForm" autocomplete="off">
+    <div class="login-brand">
+      <div class="brand__logo">MC</div>
+      <div>
+        <h1>McBot 控制台</h1>
+        <p>需要访问密钥才能进入</p>
+      </div>
+    </div>
+
+    <label class="login-field">
+      <span>访问密钥</span>
+      <input class="input" id="keyInput" placeholder="XXXX-XXXX-XXXX"
+             spellcheck="false" autocomplete="off" autofocus>
+    </label>
+
+    <button class="btn primary login-submit" id="btnLogin" type="submit">
+      进入控制台
+    </button>
+
+    <p class="login-error" id="loginError" hidden></p>
+
+    <div class="login-note">
+      <p>密钥有效期为 <b>10 分钟</b>，到期后需要重新登录。</p>
+      <p>续约：在面板右上角点「续约」，或在游戏内私聊机器人
+        <code>xy &lt;密钥&gt;</code>。</p>
+      <p>获取密钥：在桌面端点「Web 密钥」生成，或游戏内私聊
+        <code>get</code>（仅主人名单）。</p>
+    </div>
+  </form>
+  <p class="login-foot">McBot · 离线模式</p>
+</main>
+
+<script>
+"use strict";
+const $ = (sel) => document.querySelector(sel);
+const form = $("#loginForm");
+const input = $("#keyInput");
+const button = $("#btnLogin");
+const error = $("#loginError");
+
+function fail(message) {
+  error.textContent = message;
+  error.hidden = false;
+  input.focus();
+  input.select();
+}
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const key = input.value.trim();
+  if (!key) {
+    fail("请输入访问密钥");
+    return;
+  }
+  button.disabled = true;
+  button.textContent = "验证中…";
+  error.hidden = true;
+  try {
+    const res = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key }),
+    });
+    let data = {};
+    try { data = await res.json(); } catch (_) { data = {}; }
+    if (res.ok && data.ok) {
+      location.replace("/");
+      return;
+    }
+    fail(data.error || "密钥无效或已过期");
+  } catch (err) {
+    fail("无法连接控制台服务");
+  } finally {
+    button.disabled = false;
+    button.textContent = "进入控制台";
+  }
+});
+
+// 已登录则直接进入面板
+fetch("/api/auth").then((res) => res.json()).then((data) => {
+  if (data && data.authed) location.replace("/");
+}).catch(() => {});
+</script>
+</body>
+</html>

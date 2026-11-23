@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>McBot · 控制台</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%235b8cff'/%3E%3Ctext x='32' y='43' font-family='Segoe UI,Arial' font-size='26' font-weight='700' fill='white' text-anchor='middle'%3EMC%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="glow glow--blue"></div>
+<div class="glow glow--violet"></div>
+
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand__logo">MC</div>
+      <div class="brand__text">
+        <h1>McBot 控制台</h1>
+        <p class="server-line">
+          <span class="dot dot--off" id="serverDot"></span>
+          <span id="serverText">未连接服务器 · 离线模式</span>
+        </p>
+      </div>
+    </div>
+    <div class="topbar__right">
+      <div class="pill pill--key" id="keyPill" title="登录密钥剩余时间">
+        <span class="pill__label">密钥</span><b id="keyText">--:--</b>
+      </div>
+      <button class="btn ghost" id="btnRenew" title="把当前密钥再延长 10 分钟">续约</button>
+      <button class="btn ghost" id="btnLogout" title="退出当前登录">退出</button>
+      <div class="pill" id="onlinePill">
+        <span class="dot dot--on"></span><b id="onlineText">在线 0 / 0</b>
+      </div>
+      <button class="btn ghost" id="btnRefresh" title="重新拉取状态">刷新</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- 账号 -->
+    <section class="card accounts">
+      <div class="card__head">
+        <h2>账号</h2>
+        <span class="hint">勾选后批量操作</span>
+        <span class="spacer"></span>
+        <span class="chip" id="selectedChip">已选 0 / 0</span>
+      </div>
+
+      <div class="acc-list" id="accList">
+        <div class="empty" id="accEmpty">
+          <div class="empty__icon">🎮</div>
+          <div class="empty__title">还没有账号</div>
+          <p>在下方填写账号名与密码，或直接编辑 config.json</p>
+        </div>
+      </div>
+
+      <form class="add-form" id="addForm" autocomplete="off">
+        <input class="input" id="newName" placeholder="账号名" spellcheck="false">
+        <input class="input" id="newPwd" type="password" placeholder="密码（可留空）" spellcheck="false">
+        <button class="btn primary" type="submit">＋ 添加</button>
+      </form>
+
+      <div class="actions">
+        <div class="actions__row">
+          <button class="btn ghost sm" id="btnSelectAll">全选</button>
+          <button class="btn ghost sm" id="btnInvert">反选</button>
+          <button class="btn ghost sm" id="btnSelectNone">清空勾选</button>
+          <span class="spacer"></span>
+          <button class="btn primary sm" id="btnConnect">▶ 上线所选</button>
+        </div>
+        <div class="actions__row">
+          <button class="btn ghost sm" id="btnDisconnect">下线所选</button>
+          <button class="btn ghost sm" id="btnReconnect">重置重连</button>
+          <button class="btn danger sm" id="btnDelete">删除所选</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 右侧 -->
+    <section class="right">
+      <div class="card server">
+        <div class="card__head">
+          <h2>服务器</h2>
+          <span class="hint">4 条线路可保存，测速后再上线</span>
+          <span class="spacer"></span>
+          <span class="chip chip--ok" id="pingChip" hidden></span>
+        </div>
+        <div class="line-row">
+          <span class="label">线路</span>
+          <div class="lines" id="lines"></div>
+          <input class="input" id="addr" placeholder="服务器地址，如 mc.example.com:25565" spellcheck="false">
+          <button class="btn primary sm" id="btnPing">测速</button>
+          <button class="btn sm" id="btnSaveLine">保存线路</button>
+        </div>
+        <div class="opt-row">
+          <label class="field">
+            <span>上号间隔</span>
+            <span class="field__unit">
+              <input class="input input--num" id="gap" type="number" min="1" max="300" value="1">
+              <em>秒</em>
+            </span>
+          </label>
+          <span class="vsep"></span>
+          <label class="switch">
+            <input type="checkbox" id="optReconnect"><span class="track"></span><span>掉线重连</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" id="optLogin"><span class="track"></span><span>自动 /login</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" id="optRespawn"><span class="track"></span><span>死亡重生</span>
+          </label>
+          <span class="hint" id="pingText">依次连接，避免同时挤服</span>
+        </div>
+      </div>
+
+      <div class="card console">
+        <div class="card__head">
+          <h2>控制台</h2>
+          <span class="chip" id="logCount">0 条</span>
+          <span class="spacer"></span>
+          <div class="seg" id="modeSeg">
+            <button type="button" data-mode="console" class="active">全部日志</button>
+            <button type="button" data-mode="chat">聊天监控</button>
+          </div>
+          <button class="btn ghost sm" id="btnClear">清空</button>
+        </div>
+        <div class="log" id="log" role="log" aria-live="polite"></div>
+        <form class="cmdbar" id="cmdForm" autocomplete="off">
+          <select class="input select" id="target">
+            <option value="">全部在线账号</option>
+          </select>
+          <input class="input" id="cmdInput" placeholder="输入聊天内容或 /命令，回车发送给目标账号">
+          <button class="btn primary" type="submit">发送</button>
+        </form>
+      </div>
+
+      <details class="card reply" id="replyCard">
+        <summary class="card__head">
+          <h2>自动回复</h2>
+          <span class="hint">检测私聊 → 回复 / 执行命令</span>
+          <span class="spacer"></span>
+          <label class="switch" id="replySwitch" title="启用自动回复">
+            <input type="checkbox" id="replyEnabled"><span class="track"></span><span>启用</span>
+          </label>
+          <span class="chevron">▾</span>
+        </summary>
+        <div class="reply__body">
+          <label class="masters-row">
+            <span class="label">主人名单</span>
+            <input class="input" id="masters" placeholder="逗号分隔，如 Steve, Alex；仅名单内玩家可触发「仅主人」规则">
+          </label>
+          <div class="rules-head">
+            <span>触发词</span><span>回复内容</span><span>执行命令</span><span>仅主人</span><span></span>
+          </div>
+          <div class="rules" id="rules"></div>
+          <div class="reply__foot">
+            <button class="btn sm" type="button" id="btnAddRule">＋ 添加规则</button>
+            <span class="spacer"></span>
+            <span class="hint" id="replyHint">触发词留空 = 任意私聊；{name} / {msg} 会被替换</span>
+            <button class="btn primary sm" type="button" id="btnSaveReply">保存规则</button>
+          </div>
+        </div>
+      </details>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>McBot · 离线模式</span>
+    <span id="footerAddr">—</span>
+    <span class="footer__spacer"></span>
+    <span id="footerClock">--:--:--</span>
+  </footer>
+</div>
+
+<div class="toasts" id="toasts"></div>
+<script src="app.js"></script>
+</body>
+</html>

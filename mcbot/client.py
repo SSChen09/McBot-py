@@ -48,6 +48,8 @@ LOGIN_IN_COOKIE_REQUEST = 0x05
 
 LATEST_PROTOCOL = 769  # 1.21.4，ping 时作为客户端版本上报
 
+TICK_RATE = 20.0  # 原版客户端每秒 tick 数（client_tick_end 发送节奏）
+
 
 def _parse_component(text: str) -> Any:
     """安全解析聊天组件：空串或非法 JSON 按纯文本处理，避免 json.loads 抛错。"""
@@ -170,6 +172,7 @@ class McBotClient:
         color_enabled: bool = False,
         on_chat: Optional[Callable[[str], None]] = None,
         on_disconnect: Optional[Callable[[str], None]] = None,
+        on_teleport: Optional[Callable[[float, float, float], None]] = None,
         auto_respawn: bool = True,
     ) -> None:
         self.host = host
@@ -180,6 +183,7 @@ class McBotClient:
         self.color_enabled = color_enabled
         self.on_chat = on_chat
         self.on_disconnect = on_disconnect
+        self.on_teleport = on_teleport
         self.auto_respawn = auto_respawn
 
         self.conn: Optional[MCConnection] = None
@@ -213,6 +217,7 @@ class McBotClient:
         self._respawn_delay = 1.0  # 秒（MCC respawnTicks = ClientTicksPerSecond）
 
         self._recv_thread: Optional[threading.Thread] = None
+        self._tick_thread: Optional[threading.Thread] = None
         self._closing = False  # 主动断开标志（屏蔽关闭竞态产生的底层错误）
 
     # --- 状态查询 ping -------------------------------------------------------
@@ -288,6 +293,9 @@ class McBotClient:
         self.running = True
         self._recv_thread = threading.Thread(target=self._play_loop, daemon=True)
         self._recv_thread.start()
+
+        # 5. 客户端 tick 循环（1.21.2+ 每个 tick 末发 client_tick_end）
+        self._start_tick_loop()
 
     def _login_loop(self) -> None:
         assert self.conn is not None
@@ -414,8 +422,8 @@ class McBotClient:
         """资源包请求：全部版本 ≥1.20.4，先读 UUID，回 accepted + loaded。"""
         assert self.conn is not None and self.version is not None
         pack_uuid = buf.read_uuid()
-        _url = buf.read_string()
-        _hash = buf.read_string()
+        buf.read_string()  # url（暂不使用）
+        buf.read_string()  # hash（暂不使用）
         buf.read_bool()  # forced
         if buf.read_bool():  # hasPromptMessage
             prompt = _read_component(buf)
@@ -552,7 +560,73 @@ class McBotClient:
             struct.pack(">ddd", self.x, self.y, self.z)
             + write_bool(True)  # onGround
         )
-        self.conn.send_packet(v_out(self, "player_position"), payload)
+        self._send_movement("player_position", payload)
+
+        # 先确认服务器下发的传送，再通知上层（sethome/goto 会在回调里发命令），
+        # 避免命令包排到 teleport_confirm 之前被服务器按旧位置处理。
+        if self.on_teleport:
+            try:
+                self.on_teleport(self.x, self.y, self.z)
+            except Exception as exc:
+                self._emit_chat(f"[警告] 传送回调失败: {exc}")
+
+    # --- 客户端 tick（1.21.2+） ----------------------------------------------
+
+    def _client_tick_end_id(self) -> Optional[int]:
+        """当前版本出包 client_tick_end 的包 ID；不支持的版本返回 None。"""
+        if self.version is None:
+            return None
+        return self.version.out_id("play", "client_tick_end")
+
+    def _send_movement(self, name: str, payload: bytes) -> None:
+        """发送移动包；1.21.2+ 紧跟一个 client_tick_end 且与移动包同批发出。
+
+        26.3+ 的 ServerGamePacketListenerImpl 每个客户端 tick 只接受一个带
+        位置的包，且只在收到 client_tick_end 时清零该计数；两个包必须处于
+        同一次 sendall，否则其它线程的写入可能插在两者之间导致顺序错乱。
+        """
+        assert self.conn is not None
+        packets = [(v_out(self, name), payload)]
+        tick_end_id = self._client_tick_end_id()
+        if tick_end_id is not None:
+            packets.append((tick_end_id, b""))
+        self.conn.send_packets(packets)
+
+    def _start_tick_loop(self) -> None:
+        tick_end_id = self._client_tick_end_id()
+        if tick_end_id is None:  # 1.21.1 及更早没有该包
+            return
+        self._tick_thread = threading.Thread(
+            target=self._tick_loop,
+            args=(tick_end_id,),
+            name=f"tick-{self.username}",
+            daemon=True,
+        )
+        self._tick_thread.start()
+
+    def _tick_loop(self, tick_end_id: int) -> None:
+        """20 TPS 后台循环：play 阶段每个 tick 末发一个空 client_tick_end。
+
+        原版客户端自 1.21.2 起每 tick 发送该包，服务端据此重置
+        "每 tick 一个移动包"计数。落后时不补发，避免一次性突发。
+        """
+        interval = 1.0 / TICK_RATE
+        deadline = time.monotonic()
+        while self.running:
+            deadline += interval
+            delay = deadline - time.monotonic()
+            if delay > 0:
+                time.sleep(delay)
+            else:
+                deadline = time.monotonic()
+            if not self.running:
+                break
+            if self.phase != "play" or self.conn is None:
+                continue
+            try:
+                self.conn.send_packet(tick_end_id)
+            except (ConnectionClosed, OSError):
+                break
 
     def _handle_chunk_batch_finished(self, buf: PacketBuffer) -> None:
         """自适应批次应答速率（MCC 行1293-1347）。"""
@@ -692,9 +766,11 @@ class McBotClient:
             self.conn.close()
 
     def join(self, timeout: Optional[float] = None) -> None:
-        """等待游戏循环线程结束。"""
+        """等待游戏循环线程（以及客户端 tick 线程）结束。"""
         if self._recv_thread:
             self._recv_thread.join(timeout)
+        if self._tick_thread:
+            self._tick_thread.join(timeout)
 
 
 def v_out(client: McBotClient, name: str) -> int:

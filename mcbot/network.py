@@ -92,21 +92,38 @@ class MCConnection:
         packet_id = buf.read_varint()
         return packet_id, buf
 
-    def send_packet(self, packet_id: int, payload: bytes = b"") -> None:
-        """按当前压缩设置编码并发送一个包。"""
+    def _encode_packet(self, packet_id: int, payload: bytes) -> bytes:
+        """按当前压缩设置把一个包编码成完整帧（不含发送锁）。"""
         data = write_varint(packet_id) + payload
         if self.compression_threshold < 0:
-            frame = write_varint(len(data)) + data
+            return write_varint(len(data)) + data
+        if len(data) >= self.compression_threshold:
+            compressed = zlib.compress(data)
+            body = write_varint(len(data)) + compressed
         else:
-            if len(data) >= self.compression_threshold:
-                compressed = zlib.compress(data)
-                body = write_varint(len(data)) + compressed
-            else:
-                body = write_varint(0) + data
-            frame = write_varint(len(body)) + body
+            body = write_varint(0) + data
+        return write_varint(len(body)) + body
+
+    def send_packet(self, packet_id: int, payload: bytes = b"") -> None:
+        """按当前压缩设置编码并发送一个包。"""
+        self._send_frames(self._encode_packet(packet_id, payload))
+
+    def send_packets(self, packets: "list[tuple[int, bytes]]") -> None:
+        """原子地发送多个包：同一把发送锁、同一次 sendall。
+
+        用于"移动包 + client_tick_end"这类必须相邻到达的组合，
+        避免其它线程的写入插在两者之间。
+        """
+        if not packets:
+            return
+        self._send_frames(
+            b"".join(self._encode_packet(packet_id, payload) for packet_id, payload in packets)
+        )
+
+    def _send_frames(self, frames: bytes) -> None:
         with self._send_lock:
             try:
-                self._sock.sendall(frame)
+                self._sock.sendall(frames)
             except OSError as exc:
                 raise ConnectionClosed(str(exc)) from exc
 

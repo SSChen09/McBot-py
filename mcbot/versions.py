@@ -221,6 +221,7 @@ _register(VersionInfo(
         "chunk_batch_received": 0x09,
         "client_settings": 0x0C,
         "client_status": 0x0A,
+        "client_tick_end": 0x0B,  # 1.21.2+：每个客户端 tick 结束标志
         "acknowledge_configuration": 0x0E,
         "interact_entity": 0x15,
         "keep_alive": 0x1A,
